@@ -127,10 +127,7 @@ func handler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		w.WriteHeader(resp.StatusCode)
-		if _, err := io.Copy(w, resp.Body); err != nil {
-			http.Error(w, "Failed to copy response body", http.StatusInternalServerError)
-			return
-		}
+		io.Copy(w, resp.Body)
 	}
 }
 
