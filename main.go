@@ -16,7 +16,11 @@ var urlHtmlPattern = regexp.MustCompile(`(")(https?://[^\s"'<>\)]+|/[^\s"'<>\)]+
 var urlListPattern = regexp.MustCompile(`(?m)^(https?://[^\s"'<>\)]+|/[^\s"'<>\)]+)$`)
 
 func handler(w http.ResponseWriter, r *http.Request) {
-	urlPrefix := "http://" + r.Host + "/"
+	urlScheme := "http"
+	if r.TLS != nil {
+		urlScheme = "https"
+	}
+	urlPrefix := urlScheme + "://" + r.Host + "/"
 
 	target := strings.TrimPrefix(r.RequestURI, "/")
 	if target == "" {
