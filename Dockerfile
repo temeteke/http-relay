@@ -5,13 +5,13 @@ FROM golang:1.23.4
 WORKDIR /app
 
 # Copy go.mod and go.sum files
-COPY go.mod ./
+COPY go.mod go.sum ./
 
 # Download dependencies
 RUN go mod download
 
-# Copy the rest of the application code
-COPY . .
+# Copy only the necessary application code
+COPY main.go ./
 
 # Build the application
 RUN go build -o http-relay
