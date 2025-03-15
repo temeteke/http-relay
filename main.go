@@ -107,8 +107,14 @@ func handler(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// ヘッダーを設定してレスポンスを返す
-	w.Header().Set("Content-Type", contentType)
+	for name, values := range resp.Header {
+		if strings.ToLower(name) == "content-length" || strings.ToLower(name) == "content-encoding" {
+			continue
+		}
+		for _, value := range values {
+			w.Header().Add(name, value)
+		}
+	}
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(modifiedBody)))
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(modifiedBody)
