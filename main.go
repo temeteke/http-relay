@@ -2,7 +2,6 @@ package main
 
 import (
 	"compress/gzip"
-	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -40,12 +39,12 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for name, values := range r.Header {
-		lowerName := strings.ToLower(name)
-		if lowerName == "host" {
+		canonicalName := http.CanonicalHeaderKey(name)
+		if canonicalName == "Host" {
 			continue
 		}
 		for _, value := range values {
-			req.Header.Add(name, value)
+			req.Header.Add(canonicalName, value)
 		}
 	}
 
@@ -57,67 +56,82 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
-	var bodyBytes []byte
-	encoding := resp.Header.Get("Content-Encoding")
-	if encoding == "gzip" {
-		gzReader, err := gzip.NewReader(resp.Body)
-		if err != nil {
-			http.Error(w, "Failed to create gzip reader", http.StatusInternalServerError)
-			return
-		}
-		defer gzReader.Close()
-		bodyBytes, err = io.ReadAll(gzReader)
-		if err != nil {
-			http.Error(w, "Failed to read gzip body", http.StatusInternalServerError)
-			return
-		}
-	} else {
-		bodyBytes, err = io.ReadAll(resp.Body)
-		if err != nil {
-			http.Error(w, "Failed to read response body", http.StatusInternalServerError)
-			return
-		}
-	}
-
-	// URL の書き換え（Content-Type チェック）
-	modifiedBody := bodyBytes
 	contentType := resp.Header.Get("Content-Type")
-	if contentType == "text/html" {
-		modifiedBody = urlHtmlPattern.ReplaceAllFunc(bodyBytes, func(match []byte) []byte {
-			submatch := urlHtmlPattern.FindStringSubmatch(string(match))
-			parsedURL, err := url.Parse(submatch[2])
-			if err != nil {
-				return match
-			}
-			if !parsedURL.IsAbs() {
-				parsedURL = targetURL.ResolveReference(parsedURL)
-			}
-			return []byte(submatch[1] + urlPrefix + parsedURL.String() + submatch[3])
-		})
-	} else if contentType == "application/x-mpegurl" || contentType == "application/vnd.apple.mpegur" {
-		modifiedBody = urlListPattern.ReplaceAllFunc(bodyBytes, func(match []byte) []byte {
-			parsedURL, err := url.Parse(string(match))
-			if err != nil {
-				return match
-			}
-			if !parsedURL.IsAbs() {
-				parsedURL = targetURL.ResolveReference(parsedURL)
-			}
-			return []byte(urlPrefix + parsedURL.String())
-		})
-	}
 
-	for name, values := range resp.Header {
-		if strings.ToLower(name) == "content-length" || strings.ToLower(name) == "content-encoding" {
-			continue
+	// Rewrite the response body if it is HTML or M3U8
+	if contentType == "text/html" || contentType == "application/x-mpegurl" || contentType == "application/vnd.apple.mpegurl" {
+		// Decompress the response body if it is compressed
+		var bodyBytes []byte
+		if resp.Header.Get("Content-Encoding") == "gzip" {
+			gzReader, err := gzip.NewReader(resp.Body)
+			if err != nil {
+				http.Error(w, "Failed to create gzip reader", http.StatusInternalServerError)
+				return
+			}
+			defer gzReader.Close()
+			bodyBytes, err = io.ReadAll(gzReader)
+			if err != nil {
+				http.Error(w, "Failed to read gzip body", http.StatusInternalServerError)
+				return
+			}
+			resp.Header.Del("Content-Encoding")
+		} else {
+			bodyBytes, err = io.ReadAll(resp.Body)
+			if err != nil {
+				http.Error(w, "Failed to read response body", http.StatusInternalServerError)
+				return
+			}
 		}
-		for _, value := range values {
-			w.Header().Add(name, value)
+
+		// Modify URLs in the response body
+		modifiedBody := bodyBytes
+		if contentType == "text/html" {
+			modifiedBody = urlHtmlPattern.ReplaceAllFunc(bodyBytes, func(match []byte) []byte {
+				submatch := urlHtmlPattern.FindStringSubmatch(string(match))
+				parsedURL, err := url.Parse(submatch[2])
+				if err != nil {
+					return match
+				}
+				if !parsedURL.IsAbs() {
+					parsedURL = targetURL.ResolveReference(parsedURL)
+				}
+				return []byte(submatch[1] + urlPrefix + parsedURL.String() + submatch[3])
+			})
+		} else if contentType == "application/x-mpegurl" || contentType == "application/vnd.apple.mpegurl" {
+			modifiedBody = urlListPattern.ReplaceAllFunc(bodyBytes, func(match []byte) []byte {
+				parsedURL, err := url.Parse(string(match))
+				if err != nil {
+					return match
+				}
+				if !parsedURL.IsAbs() {
+					parsedURL = targetURL.ResolveReference(parsedURL)
+				}
+				return []byte(urlPrefix + parsedURL.String())
+			})
+		}
+
+		// Write the modified response
+		for name, values := range resp.Header {
+			for _, value := range values {
+				w.Header().Add(name, value)
+			}
+		}
+		// Let http.ResponseWriter handle Content-Length automatically
+		w.WriteHeader(resp.StatusCode)
+		w.Write(modifiedBody)
+	} else {
+		// Write the response as is
+		for name, values := range resp.Header {
+			for _, value := range values {
+				w.Header().Add(name, value)
+			}
+		}
+		w.WriteHeader(resp.StatusCode)
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			http.Error(w, "Failed to copy response body", http.StatusInternalServerError)
+			return
 		}
 	}
-	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(modifiedBody)))
-	w.WriteHeader(resp.StatusCode)
-	_, _ = w.Write(modifiedBody)
 }
 
 func main() {
