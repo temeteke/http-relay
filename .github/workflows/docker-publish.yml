@@ -81,8 +81,11 @@ jobs:
             ${{ env.REGISTRY_GHCR }}/${{ env.IMAGE_NAME }}
             ${{ env.REGISTRY_DOCKERHUB }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch,pattern=main
+            type=schedule
+            type=ref,event=branch
             type=ref,event=tag
+            type=ref,event=pr
+            type=raw,value=latest,enable={{is_default_branch}}
 
       # Build and push Docker image with Buildx (don't push on PR)
       # https://github.com/docker/build-push-action
@@ -92,7 +95,7 @@ jobs:
         with:
           context: .
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ${{ steps.meta.outputs.tags }},latest
+          tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
