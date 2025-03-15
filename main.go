@@ -13,14 +13,11 @@ import (
 	"github.com/gorilla/mux"
 )
 
-var urlPattern = regexp.MustCompile(`\bhttps?://[^\s"'<>\)]+`)
+var urlHtmlPattern = regexp.MustCompile(`(")(https?://[^\s"'<>\)]+|/[^\s"'<>\)]+)(")`)
+var urlListPattern = regexp.MustCompile(`(?m)^(https?://[^\s"'<>\)]+|/[^\s"'<>\)]+)$`)
 
 func handler(w http.ResponseWriter, r *http.Request) {
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	proxyRelayPrefix := scheme + "://" + r.Host + "/"
+	urlPrefix := "http://" + r.Host + "/"
 
 	target := strings.TrimPrefix(r.RequestURI, "/")
 	if target == "" {
@@ -84,18 +81,34 @@ func handler(w http.ResponseWriter, r *http.Request) {
 
 	// URL の書き換え（Content-Type チェック）
 	modifiedBody := bodyBytes
-	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/") {
-		modifiedBody = urlPattern.ReplaceAllFunc(bodyBytes, func(match []byte) []byte {
-			url := string(match)
-			if strings.HasPrefix(url, proxyRelayPrefix) {
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "text/html" {
+		modifiedBody = urlHtmlPattern.ReplaceAllFunc(bodyBytes, func(match []byte) []byte {
+			submatch := urlHtmlPattern.FindStringSubmatch(string(match))
+			parsedURL, err := url.Parse(submatch[2])
+			if err != nil {
 				return match
 			}
-			return []byte(proxyRelayPrefix + url)
+			if !parsedURL.IsAbs() {
+				parsedURL = targetURL.ResolveReference(parsedURL)
+			}
+			return []byte(submatch[1] + urlPrefix + parsedURL.String() + submatch[3])
+		})
+	} else if contentType == "application/x-mpegurl" || contentType == "application/vnd.apple.mpegur" {
+		modifiedBody = urlListPattern.ReplaceAllFunc(bodyBytes, func(match []byte) []byte {
+			parsedURL, err := url.Parse(string(match))
+			if err != nil {
+				return match
+			}
+			if !parsedURL.IsAbs() {
+				parsedURL = targetURL.ResolveReference(parsedURL)
+			}
+			return []byte(urlPrefix + parsedURL.String())
 		})
 	}
 
 	// ヘッダーを設定してレスポンスを返す
-	w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(modifiedBody)))
 	w.WriteHeader(resp.StatusCode)
 	_, _ = w.Write(modifiedBody)
